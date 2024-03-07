@@ -7,7 +7,7 @@ import fs from 'fs';
 import os from 'os';
 import { format } from 'util';
 
-import { app } from 'electron';
+import { app, ipcMain } from 'electron';
 
 export interface ILogger {
   log(message: string): void;
@@ -105,14 +105,13 @@ function initUpdater(opts: ReturnType<typeof validateInput>) {
     return;
   }
 
-  const { app, autoUpdater, dialog } = electron;
+  const { app, autoUpdater, dialog, BrowserWindow } = electron;
   let feedURL: string;
   let serverType: 'default' | 'json' = 'default';
   switch (updateSource.type) {
     case UpdateSourceType.ElectronPublicUpdateService: {
-      feedURL = `${updateSource.host}/${updateSource.repo}/${process.platform}-${
-        process.arch
-      }/${app.getVersion()}`;
+      feedURL = `${updateSource.host}/${updateSource.repo}/${process.platform}-${process.arch
+        }/${app.getVersion()}`;
       break;
     }
     case UpdateSourceType.StaticStorage: {
@@ -162,17 +161,28 @@ function initUpdater(opts: ReturnType<typeof validateInput>) {
       (event, releaseNotes, releaseName, releaseDate, updateURL) => {
         log('update-downloaded', [event, releaseNotes, releaseName, releaseDate, updateURL]);
 
-        const dialogOpts = {
-          type: 'info',
-          buttons: ['Restart', 'Later'],
+        const dialogWindow = new BrowserWindow({
+          width: 300,
+          height: 300,
           title: 'Application Update',
-          message: process.platform === 'win32' ? releaseNotes : releaseName,
-          detail:
-            'A new version has been downloaded. Restart the application to apply the updates.',
-        };
+          frame: false,
+          resizable: false,
+          webPreferences: {
+            nodeIntegration: true,
+            contextIsolation: false,
+          },
+        });
 
-        dialog.showMessageBox(dialogOpts).then(({ response }) => {
-          if (response === 0) autoUpdater.quitAndInstall();
+        dialogWindow.loadFile('views/dialog.html');
+
+        const release = process.platform === 'win32' ? releaseNotes : releaseName;
+
+        dialogWindow.webContents.on('did-finish-load', () => {
+          dialogWindow.webContents.send('update-info', release);
+        });
+
+        ipcMain.on('install-update', () => {
+          autoUpdater.quitAndInstall();
         });
       },
     );
@@ -232,8 +242,8 @@ function validateInput(opts: IUpdateElectronAppOptions) {
     case UpdateSourceType.StaticStorage: {
       assert(
         updateSource.baseUrl &&
-          isURL(updateSource.baseUrl) &&
-          updateSource.baseUrl.startsWith('https:'),
+        isURL(updateSource.baseUrl) &&
+        updateSource.baseUrl.startsWith('https:'),
         'baseUrl must be a valid HTTPS URL',
       );
       break;
